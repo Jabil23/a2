@@ -1,0 +1,2118 @@
+#turbo 40
+
+#include Ninjadvloota2.inc
+
+#include a2.inc
+#include Leet.inc
+#include spell_routines.inc
+
+
+#event TargetOoR "#*#Your target is too far away, get closer!#*#"
+#event TargetOoR "#*#You cannot see your target.#*#"
+#event MobDeath "#*#You have slain #1#!"
+#Event GotHitDmg   "#1#YOU for#*#points of damage."
+#Event GotHit   "#1# tries to #*# YOU, but #*#" 
+#Event LockedObj "#*#You cannot open #1#,#*#"
+#event Hit "#*#YOU #*# #1# for #*# points of damage."
+#Event GainSoloExp "#*#You gain experience!!"
+#Event ArrowSwap "#*#Error: Ammo: type 21 != 27, you have the wrong type of ammo!#*#"
+#Event LdonCountMob "#*#Population : #1#"
+#Event LdonReset "#*#A loud scream fills the cavern#*#A little stronger than before"
+
+
+|Hail after warp. Helps with resyncing after warp
+#define hailIt 1
+|#of inventory slots free to trigger a sell
+#define FreeInventorySlots 7
+
+|CombatArc is used to calculate arc to keep mobs in. Value is doubled ex. 45 results in a 90deg arc
+#define CombatHalfArc 45
+
+
+sub Main
+/if (${Ini[a2.ini,a2,Version].Length}==0) /call CreateIni
+
+/if (!${Plugin[mq2cast].Name.Length}) /plugin mq2cast
+ /call SetupAdvLootVars
+
+ /call AddAlerts
+ 
+/echo a2
+ |Pet heal
+ 
+ /declare PetHealPct int outer 50    | set to 0 to disable pet heals
+ /declare PetHeal string outer Revival of Leetness 1
+
+|How long before mob is stuck? in seconds|
+
+/if (${Plugin[mq2netbots].Name.Length}>0) {
+	/if (!${NetBots.Enabled}) /netbots on
+	/if (!${NetBots.Listen}) /netbots grab=on
+	/if (!${NetBots.Output}) /netbots send=on
+
+}
+
+ 
+ /declare pcRadiusAvoid int outer 30
+ /declare JumpTime int outer 10
+
+|Alerts are defined in the A2.Inc. Will not kill mobs on alert list 1, have to go to the auto.inc to add alerts. Alerts are cleared when logging.|
+
+
+
+ /declare KillZone int outer ${Zone.ID}
+ /declare lx int outer 
+ /declare AntiDrogaMobs int outer 0
+ /declare AntiDrogaBotAvoidRange int outer 100
+ /declare AntiDrogaMobLevel int outer 105
+ /declare DrogaInstanceTier int outer 0
+ /declare DrogaInstanceLinks[10] string outer 
+ /declare DrogaTimer timer outer
+ /declare IsLdon int outer 0
+ /declare WaitingOnRespawn timer outer 0
+ /declare MeleeHitLastTimer timer outer 0
+ /declare MeleeGotHitLastTimer timer outer 0
+ /declare MeleeGotMissedLastTimer timer outer 0
+
+ /declare InstanceReSpawning int outer 0
+ /declare InstanceNumResets int outer 0
+ /declare InstanceCurrentMobCount int outer 0
+ /declare InstanceMaxMobCount int outer 0
+ /declare InstanceNumKills int outer 0
+ /declare InstanceAvgLvl float outer 0
+
+ /call CheckLdon
+ /if (${IsLdon}) {
+	 
+	 /echo In LDON!
+	 /declare LdonBoss string outer ${Ini[a2.ini,Ldons,Bosses]}
+	 
+	 /alert clear 33
+	 /alert add 33 npc first of
+	 /alert add 33 npc second of
+	 /alert add 33 npc third of
+	 /alert add 33 npc fourth of
+	 /alert add 33 npc fifth of
+	 /alert add 33 npc sixth of 
+	 /alert add 33 npc seventh of
+	 /alert add 33 npc eighth of
+	 /alert add 33 npc ninth of
+	 /alert add 33 npc tenth of
+	 /alert add 33 npc eleventh of
+	 /alert add 33 npc twelfth of
+	 /alert add 33 npc thirteenth of
+	 /alert add 33 npc fourteenth of
+	 /alert add 33 npc fifteenth of
+
+	 |a2.ini a2 ${Me.Name} ${Me.ID}|${Zone.ID}|${InstanceAvgLvl}|${InstanceCurrentMobCount}|${InstanceMaxMobCount}|${InstanceNumKills}|${InstanceNumResets}
+	 /declare tempINI string local ${Ini[a2.ini,a2,${Me.Name}]}
+	 /if (${tempINI.Arg[1,|].Equal[${Me.ID}]} && ${tempINI.Arg[2,|].Equal[${Zone.ID}]}) {
+		 /echo Reloading Instance Variables
+		 /varset InstanceAvgLvl ${tempINI.Arg[3,|]}
+		 /varset InstanceCurrentMobCount ${tempINI.Arg[4,|]}
+		 /varset InstanceMaxMobCount ${tempINI.Arg[5,|]}
+		 /varset InstanceNumKills ${tempINI.Arg[6,|]}
+		 /varset InstanceNumResets ${tempINI.Arg[7,|]}
+
+		 /echo AvgLvl:${InstanceAvgLvl} NumKills:${InstanceNumKills} NumReset:${InstanceNumResets}
+		 
+	 }
+	
+ }
+ /declare ReclaimInvOpenOnce int outer 0
+|How many levels below or above you want to kill|
+
+ /declare MinLVL int outer 85
+
+ /declare MaxLVL int outer 125
+
+ /declare DeathCounter int outer 0
+ 
+ /declare ZoneIDStarted int outer ${Zone.ID}
+
+ /declare OoRRetargetTimer timer outer
+
+|Calculated as the macro runs and your level changes|
+
+ /declare TargMin int outer
+
+ /declare TargMax int outer
+
+
+/declare MeleeTimeOutDuration string outer
+/if (${Ini[a2.ini,${Zone.ShortName},MeleeTimeOut].Length}>0) {
+	/varset MeleeTimeOutDuration ${Ini[a2.ini,${Zone.ShortName},MeleeTimeOut]}
+	/echo MeleeTimeOutDuration Set to ${MeleeTimeOutDuration} from a2.ini [${Zone.ShortName}]
+	
+}
+
+/if (${MeleeTimeOutDuration.Length}==0 && ${Ini[a2.ini,a2,MeleeTimeOut].Length}>0) {
+	/varset MeleeTimeOutDuration ${Ini[a2.ini,a2,MeleeTimeOut]}
+	/echo MeleeTimeOutDuration Set to ${MeleeTimeOutDuration} from a2.ini [a2]
+	
+}
+
+/if (${MeleeTimeOutDuration.Length}==0) {
+	/ini a2.ini a2 MeleeTimeOut 45s
+	/varset MeleeTimeOutDuration 45s
+}
+/declare spamTimer timer outer
+|How far and how high to target|
+
+ /declare MaxRad int outer 2000
+
+ /declare MaxZ	int outer 500
+
+
+
+|Radius for add control|
+
+ /declare MaxRad2 int outer 30
+
+ /declare MaxZ2 int outer 50
+
+/declare regExpDone int outer 0
+
+|Defined priority of mobs to kill|
+
+ /declare Mob1 string outer 
+
+ /declare Mob2 string outer 
+
+ /declare Mob3 string outer
+
+ /declare Mob4 string outer
+
+ /declare Mob5 string outer 
+
+
+
+ /declare MobCount int outer 5
+
+ 
+
+
+
+ /declare mo int outer
+
+ /declare npcID int outer
+
+ /declare KillMob string outer 
+
+ 
+
+
+
+	/hidec looted
+/autoinv
+
+ /melee on
+
+ /declare JumpTimer timer outer
+
+ /declare CastTimer timer outer
+
+ /declare CeleTimer timer outer
+
+ /declare DivineTimer timer outer
+
+ /declare EpicTimer timer outer
+
+ /declare SpawnTimer timer outer
+
+ 
+
+ /declare RageTimer timer outer
+
+ /declare FuryTimer timer outer
+
+ /declare ChestTimer timer outer
+
+ /declare BeepTimer timer outer
+
+ /declare WaitTimer timer outer
+
+ /declare AlertTimer timer outer
+
+ /declare HealHot timer outer
+ 
+ /declare HealDir timer outer
+
+ /declare FadeCount int outer
+
+ 
+
+|DoLoot turns looting on or off|
+
+ /declare DoLoot int outer 1
+
+/declare DoBardEpicBuff int outer 1
+
+|Can define the parameters here, will override anything declared|
+
+|Have to be in order, /mac auto 1 trakanon, will not work. /mac auto 1 5000 trakanon, will prioritize trak in radius of 5000, and turn on looting. If not defined will default to values set above||
+
+ /if (${Defined[Param0]}) /varset DoLoot ${Param0}
+
+ /if (${DoLoot}==2) {
+	 /echo Looting nameds only!
+	 /declare namedMobsToLoot[10] int outer
+	 
+ } 
+
+ /if (${Defined[Param1]}) /varset MaxRad ${Param1}
+ /declare parmLoop int local
+ |/if (${Defined[Param2]}) /varset Mob1 ${Param2}
+ |/if (${Defined[Param3]}) /varset Mob2 ${Param3}
+ |/if (${Defined[Param4]}) /varset Mob3 ${Param4}
+ |/if (${Defined[Param5]}) /varset Mob4 ${Param5}
+ |/if (${Defined[Param6]}) /varset Mob5 ${Param6}
+ /for parmLoop 2 to 6
+	/if (${Param${parmLoop}.Length}>0) {
+		
+		/if (${Param${parmLoop}.Find[droga]}) {
+			/echo Setting zone started to Droga
+			/varset ZoneIDStarted 81
+			/varset KillZone 81
+			/if (${Param${parmLoop}.Length}>5) {
+				/if (!${Defined[DrogaSelectedInstanceTier]}) /declare DrogaSelectedInstanceTier int outer 0
+				/varset DrogaSelectedInstanceTier ${Param${parmLoop}.Mid[6,2]}
+			}
+			/echo ZoneIDStarted:${ZoneIDStarted}
+			/next parmLoop
+			} 
+		/if (${Param${parmLoop}.Equal[com]}) {
+			/varset ZoneIDStarted 90
+			/varset KillZone 90
+			/next parmLoop
+			} 
+		/varset Mob${Int[${Math.Calc[${parmLoop}-1]}]} ${Param${parmLoop}}
+		|/echo ${Mob${Int[${Math.Calc[${parmLoop}-1]}]}}
+			
+		
+	}
+/next parmLoop
+
+|Just draws a circle on the map with the kill radius|
+
+ /mapfilter castradius ${MaxRad}
+
+
+
+|Chest Buffs|
+
+ /declare DoCritBuff int outer 0
+
+ /declare DoBlades int outer 0
+
+
+
+|If you want looting off, but turned on when you kill a named, LootNamed turns looting on for named mobs only, overrides DoLoot|
+
+ /declare LootNamed int outer 0
+
+
+
+ /if (${DoLoot} && !${LootNamed}) /echo Looting on for all.
+
+ /if (${LootNamed}) /echo Looting on for named mobs only.
+
+ /if (!${DoLoot} && !${LootNamed}) /echo Looting off for all.
+
+ /if (${DoCritBuff}) /echo Crit Buff is on.
+
+ /if (!${DoCritBuff}) /echo Crit Buff is off.
+
+ /if (!${DoBlades}) /echo Bladestorm is off.
+
+ /if (${DoBlades}) /echo Bladestorm is on.
+
+ 
+
+ /call BuffCheck
+
+
+
+ /squelch /target clear
+
+ /varset AlertTimer 7m
+
+/if ( ${Zone.ID}==81) /call SetDrogaLevel
+
+/if (${Window[InventoryWindow].Child[AltCurr_PointList].Items}==0 ) {
+	
+	/if (!${Window[InventoryWindow].Open}) /nomodkey /keypress i
+	/delay 10s ${Window[InventoryWindow].Open}
+	/notify InventoryWindow IW_Subwindows tabselect 5
+	/delay 3s ${Window[InventoryWindow].Child[AltCurr_PointList].Items}
+	/notify InventoryWindow IW_Subwindows tabselect 1
+	/windowstate InventoryWindow
+}
+:startpoint
+
+
+
+/call ZoneCheck
+
+
+
+/doevents
+
+
+
+
+
+
+
+/if (${Target.Name.Equal[${Me.Name}]}) {
+
+ /echo Me
+
+ /squelch /target clear
+
+ /goto :startpoint
+
+ }
+
+ 
+
+/if (${Target.ID} && ${Target.Type.Equal[NPC]}) {
+
+ /vardata npcID Target.ID
+
+ /if (${Target.Distance}>30) {
+
+ /squelch /warp t
+
+ /delay 2
+
+ }
+
+ /squelch /tar clear
+
+ /delay 5
+
+ /target ID ${npcID} range ${TargMin} ${TargMax}
+
+ /face fast nolook
+
+ /stick 7 moveback
+
+ /delay 3
+
+ /call combat
+
+ }
+
+
+
+/if (${Target.ID} && ${Target.Type.Equal[PC]}) {
+
+ /echo PC
+
+ /squelch /target clear
+
+ }
+
+
+
+/doevents
+
+:wait
+
+
+
+/if (${SpawnCount[NPCCorpse range ${TargMin} ${TargMax}]}>30) {
+
+ /hidec all
+
+ /hidec looted
+
+ }
+
+
+
+/if (!${AlertTimer}) {
+
+ /call AddAlerts
+
+ /varset AlertTimer 7m
+
+ |/delay 2s
+
+ }
+
+
+
+/doevents
+
+
+
+/call Buffcheck
+
+/call Zonecheck
+
+| Override SAD targeting to assist group...
+
+/if (${Zone.ID}==403 || ${Zone.ID}==405 || ${Zone.ID}==406) {
+	|Ok we are in a sad Zone.
+	/if (${Plugin[mq2netbots].Name.Length}>0) {
+		/for lx 1 to ${Math.Calc[${NetBots.Client.Count[ ]}+1]}
+			/if (${NetBots[${NetBots.Client.Arg[${lx}, ]}].InZone}) {
+
+				/if (${Spawn[${NetBots[${NetBots.Client.Arg[${lx}, ]}].TargetID}].Name.Left[2].Equal[##]}) {
+					/echo ${NetBots.Client.Arg[${lx}, ]} has engaged a BOSS!!...
+					/varset npcID ${NetBots.Client.Arg[${lx}, ].TargetID}
+					/goto :KillMob
+				}
+	
+			}
+		
+		/next lx
+	}
+}
+
+
+/varset TargMin ${Math.Calc[${Me.Level}-${MinLVL}]}
+
+/if (${TargMin}<0) /varset TargMin 1
+
+/varset TargMax ${Math.Calc[${Me.Level}+${MaxLVL}]}
+
+
+/for mo 1 to ${MobCount}
+
+ /if (${SpawnCount[npc ${Mob${mo}} radius ${MaxRad} zradius ${MaxZ} targetable noalert 1 range ${TargMin} ${TargMax}]}<1) {
+
+ /echo No ${Mob${mo}}
+
+ /if (${mo}==${MobCount}) {
+
+ /echo ${mo}
+ /echo Waiting on spawns, level range ${TargMin} to ${TargMax}.
+ /if (!${WaitingOnRespawn} && (${Zone.ID}==81 || ${Zone.ID}==90)) {
+	 /varset WaitingOnRespawn 3m
+	 /echo Set Respawn Timer to 3min.
+ }
+  /echo ${Zone.ID}
+ /varset FadeCount 0
+
+/if (${Zone.ID} != 457) /squelch /warp succor
+
+/if (${Zone.ID} == 457) /squelch /warp loc -1159 1021 44.9
+
+ /varset WaitTimer 3s
+
+ /doevents
+
+ /goto :Waiting
+
+ }	
+
+ /next mo
+
+ }
+
+
+|			// Target Selection .. 
+ /if (${SpawnCount[npc ${Mob${mo}} radius ${MaxRad} zradius ${MaxZ} targetable  noalert 1 range ${TargMin} ${TargMax} ]}>=1) {
+
+ 
+ /vardata npcID NearestSpawn[npc ${Mob${mo}} radius ${MaxRad} zradius ${MaxZ} targetable noalert 1 range ${TargMin} ${TargMax} ].ID
+ 
+ /if ( ${Zone.ID}==81) {
+ 
+	/if (${SpawnCount[pc notid ${Me.ID}]}>0) {
+	
+	/vardata npcID Spawn[id ${npcID}].NearestSpawn[${Math.Calc[1+${Math.Rand[5]}]},npc ${Mob${mo}} radius ${MaxRad} zradius ${MaxZ} targetable noalert 1 range ${TargMin} ${TargMax} ].ID
+	}
+	|//droga boss check
+	/call CheckDrogaBosses
+	/if ( ${Macro.Return} > 0) /varset npcID ${Macro.Return}
+	
+	|/call AvoidDrogaAntiBot
+	|/if ( ${Macro.Return} > 0) /varset npcID ${Macro.Return}
+	
+	/if (${AntiDrogaMobs}) {
+		/call LeaveDrogaInstance
+		|/echo LEAVE ENTERED!
+	}
+ }
+ /call AvoidPCPlayer
+  /if (${Macro.Return}>0) /varset npcID ${Macro.Return}
+
+ /call GetTargetFromXTarget
+ 
+ /if (${Macro.Return}>0) /varset npcID ${Macro.Return}
+ 
+
+ /goto :KillMob
+
+ }
+
+
+
+:KillMob
+
+
+
+/if (${npcID}==0) /goto :startpoint
+
+/echo KillMob ${Spawn[id ${npcID}].CleanName} id:${npcID}
+ /squelch /warp loc ${Math.Calc[${Spawn[id ${npcID}].Y}-3]} ${Math.Calc[${Spawn[id ${npcID}].X}-3]} ${Spawn[id ${npcID}].Z}
+ /delay 1s ${Spawn[id ${npcID}].Distance}<9
+ /target id ${npcID} range ${TargMin} ${TargMax}
+ /if ( hailIt) /hail
+ 
+ 
+
+
+
+ 
+
+
+
+/if (${Target.ID} && ${Target.Type.Equal[NPC]}) {
+
+ /echo moving back
+
+ /stick 12 moveback
+
+ /delay 2
+
+ /call combat
+
+ }
+
+
+
+/goto :startpoint
+
+
+
+
+
+
+
+
+
+:Waiting
+
+
+
+/if (!${AlertTimer}) {
+
+ /call AddAlerts
+
+ /varset AlertTimer 7m
+
+ /delay 2s
+
+ }
+
+
+
+/call ZoneCheck
+
+
+
+/if (${Target.Type.Equal[NPC]}) /goto :startpoint
+
+
+
+/for mo 1 to ${MobCount}
+
+ /if (${SpawnCount[npc ${Mob${mo}} radius ${MaxRad} zradius ${MaxZ} targetable noalert 1 range ${TargMin} ${TargMax}]}) /goto :startpoint
+
+/next mo
+
+
+
+/stand
+/if (${IsLdon} ) {
+	
+	/if (${SpawnCount[object box]}>0 || ${SpawnCount[object barrel noalert 1]}>0 || ${SpawnCount[chest barrel noalert 1]}>0 ) {
+		/echo Killing object no mobs up!
+		/call KillObject
+		/goto :Waiting
+	}
+
+	/if (${Me.Name.Equal[Eclin]} && ${SpawnCount[npc Killer Wasp]}>0) {
+
+		/call WriteLdonStat "Zone:${Zone.ShortName} NumRespawns:${InstanceNumResets} AvgLvl:${InstanceAvgLvl} NumMobs:${InstanceMaxMobCount} Kills:${InstanceNumKills}"
+		/call SummonGearPet
+		/endm
+	}
+	
+}
+
+/if (${InstanceReSpawning}) {
+	/echo Instance respawn #${InstanceNumResets} AvgMobLevel:${InstanceAvgLvl} MaxNumMobs:${InstanceMaxMobCount}
+	/varset InstanceReSpawning 0
+	/echo Starting Wait for respawn!
+	
+	
+	/call WaitForInstanceSpawn2
+	/echo Respawn DONE!
+	
+	/if (${IsLdon} && ${SpawnCount[npc alert 33]}>0) {
+		/call FoundLdonEndBoss
+	} 
+	/goto :startpoint
+}
+
+/delay 10s ${Target.ID}
+
+/if ((${Zone.ID}==81 || ${Zone.ID}==90) && !${WaitingOnRespawn}) {
+	/echo No Respawn in 3m! Resetting zone...
+	|/itemnotify powersource rightmouseup
+	/delay 3s
+}
+
+
+/goto :Waiting
+
+
+
+/return
+
+Sub FoundLdonEndBoss
+	/echo Ldon SuperBoss!! ..: ${Spawn[npc alert 33].CleanName} :..
+	/beep
+	/beep
+	|/beep
+	/squelch /warp s
+	/call PullLdonBoss ${Spawn[npc alert 33].ID}
+	
+/return
+
+Sub PullLdonBoss(bossID)
+/if (${Me.Pet.ID}) /pet leave
+/squelch /warp s 
+/delay 5
+/squelch /warp s
+/declare xloc int local ${Me.X}
+/declare yloc int local ${Me.Y}
+/declare zloc int local ${Me.Z}
+/declare petItem string local ${FindItem[godly companions]}
+/declare petTimer timer local 0
+
+/if (${petItem.Length}>0) /echo PetItem: ${petItem}
+|first check valid boss
+/if (${LdonBoss.Find[/${Spawn[${bossID}].CleanName}/]}) {
+	/echo Valid Boss!
+} 
+
+/squelch /warp loc ${Spawn[${bossID}].Y} ${Spawn[${bossID}].X} ${Spawn[${bossID}].Z}
+/delay 3
+/target id ${bossID}
+/delay 1
+/call HaveAggroOf ${bossID}
+
+
+:AggroLoop 
+	/if (${Me.Class.ShortName.Equal[RNG]} && !${Me.AutoFire}) {
+		/autofire on
+		/stick 20 moveback
+	}
+
+	/if (!${Me.Class.ShortName.Equal[RNG]} && !${Me.Combat}) {
+		/attack on
+		/pet attack
+		/stick 2 moveback
+	}
+	/if (${Target.ID}!= ${bossID}) /target id ${bossID}
+	/if (${petItem.Length}>0 && !${Me.Pet.ID} && !${petTimer} ) {
+		/call ClickItem "${petItem}"
+		/varset petTimer 1s
+	}
+
+	/if (${Me.Pet.ID} && !${petTimer}) {
+		/pet attack
+		/varset petTimer 1s
+	}
+	/call HaveAggroOf ${bossID}
+
+
+/if (!${Macro.Return}) /goto :AggroLoop
+
+/echo we have Boss Aggro!
+/attack off
+/stick off
+/squelch /warp s
+/squelch /warp s
+:waitForBoss
+/if (${Me.Pet.ID}) {
+	/pet leave
+	/delay 5
+}
+
+/if (${Spawn[${bossID}].Distance}>20) /goto :waitForBoss
+/echo Boss is here
+ /varset MeleeHitLastTimer ${MeleeTimeOutDuration}
+ /varset MeleeGotHitLastTimer 10s
+ /varset MeleeGotMissedLastTimer 10s
+/return
+
+Sub HaveAggroOf(mobID)
+
+/for lx 1 to 13
+	/if (${Me.XTarget[${lx}].ID}==${mobID}) /return TRUE
+/next lx
+/return FALSE
+
+Sub WaitForInstanceSpawn2
+	/declare bailOutTimer timer local 30s
+	
+	:dlyLoop
+	
+	 
+
+
+	/call AverageLvlOfMobs
+
+	/if ( ${SpawnCount[npc]} > 40 && ${Macro.Return}>=${Math.Calc[${InstanceAvgLvl}-10]}) {
+		
+		/varset InstanceAvgLvl 0
+		/return
+
+	}
+	/delay 1
+	/if (!${bailOutTimer}) /return
+	/goto :dlyLoop
+
+/return
+
+
+
+Sub AverageLvlOfMobs
+	|/echo Avg.....
+	/declare tempSum float local
+	/declare count int local ${If[${SpawnCount[npc]}>60,60,${SpawnCount[npc]}]}
+	|/for lx 1 to ${SpawnCount[npc]}
+	/for lx 1 to ${count}
+		/varset tempSum ${Math.Calc[${tempSum}+${NearestSpawn[${lx},npc].Level}]}
+	/next lx
+/return ${Math.Calc[${tempSum}/${count}]}
+
+Sub KillObject
+/declare tarID int local
+/if (${SpawnCount[object box noalert 1]} && ${SpawnCount[object barrel noalert 1]}) {
+ /varset tarID ${If[${Math.Rand[2]},${Spawn[object box noalert 1].ID},${Spawn[object barrel noalert 1].ID}]}
+} else {
+	/if (${SpawnCount[object box noalert 1]}) /varset tarID ${Spawn[object box noalert 1].ID}
+	/if (${SpawnCount[object barrel noalert 1]}) /varset tarID ${Spawn[object barrel noalert 1].ID}
+	/if (${SpawnCount[chest barrel noalert 1]}) /varset tarID ${Spawn[chest barrel noalert 1].ID}
+}
+
+/if (${tarID} && (${Spawn[${tarID}].Type.Equal[object]} || ${Spawn[${tarID}].Type.Equal[chest]})) {
+	/squelch /warp loc ${Spawn[${tarID}].Y} ${Spawn[${tarID}].X} ${Spawn[${tarID}].Z}
+	/delay 5
+	/target id ${tarID}
+	/delay 5
+	/open
+	/delay 5
+	/doevents
+	
+}
+/return
+
+Sub Combat
+/echo Combat Start!
+ /varset MeleeHitLastTimer ${MeleeTimeOutDuration}
+ /varset MeleeGotHitLastTimer 10s
+ /varset MeleeGotMissedLastTimer 10s
+ 
+ :kill_outer
+
+/varset JumpTimer ${JumpTime}s
+
+/if (${IsLdon} && ${SpawnCount[npc alert 33]}>0) {
+		/call FoundLdonEndBoss
+} 
+ 
+ /call Zonecheck
+
+ /doevents
+	
+ /if (${Corpse.Open}) {
+	 /nomodkey /notify LootWnd LW_DoneButton leftmouseup
+
+	 /delay 1s !${Corpse.Open}
+ }
+
+
+ :have_target
+
+ /call ZoneCheck
+
+ /doevents
+
+ /if (${Target.ID}) {
+
+ /if (${Target.Type.Equal[Corpse]}) {
+
+ /echo Corpse
+
+ /target clear
+
+ }
+ 
+ /if ((${Zone.ID}==403 ||${Zone.ID}==405 || ${Zone.ID}==406) && ${Target.CleanName.Length}==0) /tar npc noalert 1 next
+ /if (${Target.CleanName.Equal[a steadfast servant]}) {
+	/target clear
+ 
+ }
+
+
+
+ /if (${Target.ID} && ${Target.Type.Equal[PC]}) {
+
+ /echo PC
+
+ /squelch /target clear
+
+ }
+
+
+/if ( ${DoLoot}==2  ) {
+	/if  (${Target.Named} || ${Target.Name.Left[1].Equal[#]}) /call CheckNamedList
+	/if (${IsLdon} && ${LdonBoss.Find[/${Target.CleanName.Arg[1, ]}/]}) {
+		/call CheckNamedList
+	}
+}
+
+
+
+
+ /if (!${Me.Standing}) /stand
+
+
+
+
+
+ /if (${Target.ID} && !${Stick.Status.Equal[ON]}) {
+
+ /stick 7 moveback 
+
+ /face fast nolook
+
+ }
+
+/if (${WaitingOnRespawn}>0) /varset WaitingOnRespawn 0
+
+ /if (!${Me.Class.ShortName.Equal[RNG]} && ${Target.ID} && ${Target.Distance}<76 && !${Me.Combat} && !${Melee.Enrage} && ${Melee.Status.NotEqual[ESCAPING]}) {
+
+ /face fast nolook
+
+ /attack on
+
+ /pet attack
+
+ }
+
+ /if (${Me.Class.ShortName.Equal[RNG]} && ${Target.ID} && ${Target.Distance}<76 && !${Me.AutoFire} && !${Melee.Enrage} && ${Melee.Status.NotEqual[ESCAPING]}) {
+
+ /face fast nolook
+ 
+ /stick 20 moveback
+
+ /autofire on
+
+ }
+
+
+/if (!${JumpTimer} && ${Zone.ID} == 457) {
+/echo here
+/warp loc ${Math.Calc[${Me.Y}+25]} ${Math.Calc[${Me.X}+25]} ${Math.Calc[${Me.Z}+100]}
+
+/varset JumpTimer 10s
+
+
+}
+
+/if ( ${IsLdon} && ${Target.ID}) {
+	
+	|Ldon Trap mob if we only have one aggro mob sit down and let it kill it self.
+	/call CheckXTarget
+	|/echo ${Macro.Return} && !${MeleeGotHitLastTimer} && ${MeleeGotMissedLastTimer}
+
+	/if (${Macro.Return}==1 && !${MeleeGotHitLastTimer} && ${MeleeGotMissedLastTimer} && ${Target.PctHPs}>=98 ) {
+		/echo Ldon DS kill..
+		/attack off
+		
+		/stick off
+		/sit
+		/delay 5
+		/delay 5s !${Target.ID} || ${Me.Standing}
+	}
+
+	/if (${Macro.Return}==1 && ${Target.ID}>0 && ${Target.CleanName.Length}==0 && ${Me.Combat}) {
+		/for lx 1 to 3
+			/if (${Me.XTarget[${lx}].ID}==${Target.ID}) {
+				/echo Ldon DS1 kill..
+				/attack off
+				
+				/stick off
+				/sit
+				/delay 5
+				/delay 5s !${Target.ID} || ${Me.Standing}
+			}
+		/next lx
+	}
+
+	/if (${Macro.Return}>1 &&  ${Target.ID}>0 && ${Target.CleanName.Length}==0) {
+		/for lx 1 to 13
+			/if ( ${Me.XTarget[${lx}].ID} > 0 && !${Spawn[id ${Me.XTarget[${lx}].ID}].Type.Equal[Untargetable]} && ${Spawn[id ${Me.XTarget[${lx}].ID}].Type.Equal[NPC]}) {
+				/if ( ${Target.ID}!= ${Me.XTarget[${lx}].ID}) {
+					/target id ${Me.XTarget[${lx}].ID} 
+					/varset lx 14
+				}
+			}
+		/next lx
+	}
+	/if (${Macro.Return}>1 && !${MeleeGotHitLastTimer} && ${MeleeGotMissedLastTimer} && ${Target.PctHPs}>=99 ) {
+		| Change to another Target
+
+
+		
+		/for lx 1 to 13
+			/if ( ${Me.XTarget[${lx}].ID} > 0 && !${Spawn[id ${Me.XTarget[${lx}].ID}].Type.Equal[Untargetable]} && ${Spawn[id ${Me.XTarget[${lx}].ID}].Type.Equal[NPC]}) {
+				/if ( ${Target.ID}!= ${Me.XTarget[${lx}].ID}) {
+					/target id ${Me.XTarget[${lx}].ID} 
+					/varset lx 14
+				}
+			}
+		/next lx
+	}
+	|**
+
+	/if (${Macro.Return}==1 && !${MeleeGotHitLastTimer} && ${MeleeGotMissedLastTimer} && ${MeleeHitLastTimer}<=350 && !${Melee.Enrage}) {
+		/echo Ldon DS kill..
+		/attack off
+		/combat off
+		/stick off
+		/sit
+		/delay 5
+		/delay 5s !${Target.ID} || ${Me.Standing}
+	}
+**|
+	
+}
+ 
+
+ /if (${Target.Distance}>50) {
+
+ /squelch /warp target
+
+ }
+
+ 
+/if (${Zone.ID}==81) {
+	|Droga checks
+	
+	/call AvoidDrogaAntiBot
+	/if (${AntiDrogaMobs}>5) /call LeaveDrogaInstance
+}
+ /if (${Target.ID} && !${Target.LineOfSight}) {
+
+ /squelch /warp target
+
+ /delay 5
+
+ }
+
+ 
+
+
+/if (${Me.Pet.ID} && !${spamTimer}) {
+
+ /squelch /pet attack
+	/varset spamTimer 1s
+} 
+
+ 
+ 
+
+
+ /if (!${Me.Buff[Bladestorm Attunement].ID} && ${FindItemCount[=Perspicuous Coat of the Swift]} && !${ChestTimer} && ${DoBlades}) {
+
+ 
+ 
+|/itemnotify ${FindItem[Perspicuous Coat of the Swift].InvSlot} rightmouseup
+/call ClickItem "Perspicuous Coat of the Swift"
+ /varset ChestTimer 1s
+
+ /delay 1s ${Me.Buff[Bladestorm Attunement].ID}
+
+ /delay 5
+
+ }
+
+| && !${Zone.ID}==403 && !${Zone.ID}==405 && ${Zone.ID}==406
+
+/if (${Me.Class.ShortName.Equal[RNG]} && !${EpicTimer} && ${Cast.Ready[Gulrang`s Kingslayer]}) {
+
+	/delay 5
+
+	|/itemnotify mainhand rightmouseup
+	/call ClickItem "Gulrang`s Kingslayer"
+	/varset EpicTimer 60s
+	/delay 2
+
+ }
+| && !${Zone.ID}==403 && !${Zone.ID}==405 && ${Zone.ID}==406
+ |/if (${Me.Class.ShortName.Equal[WAR]} && !${EpicTimer} && ${Cast.Ready[Warwolf`s Cry of Torment]}) {
+|	/delay 5
+
+|	/itemnotify offhand rightmouseup
+|	/call ClickItem "Warwolf`s Cry of Torment"
+|	/varset EpicTimer 80s
+
+|	/delay 2
+	/if (${Me.Class.ShortName.Equal[WAR]} && ${Cast.Ready[Warwolf`s Cry of Torment]} && !${Melee.DiscID}) {
+		/delay 5
+		/call ClickItem "Warwolf`s Cry of Torment"
+		/delay 1s
+		}
+
+	/if (!${EpicTimer} && ${FindItemCount[The Epic Sword of Leet]}) {
+		/delay 5
+		/call ClickItem "The Epic Sword of Leet"
+		/varset EpicTimer 40s
+		/delay 5
+		}
+		
+		/if (${Me.CombatAbilityReady[Punch Through]} && !${Melee.DiscID}  && ${Target.PctHPs}<95 && ${Target.Type.Equal[NPC]}) {
+			/delay 5
+			/disc punch through
+			/delay 1s
+			}
+
+| }
+/if (${Me.Class.ShortName.Equal[MNK]} && !${EpicTimer} && !${Melee.DiscID} && ${Cast.Ready[The  Sepukku]}) {
+	/delay 2
+	|/itemnotify ${FindItem[The  Sepukku].InvSlot} rightmouseup
+	|/itemnotify mainhand rightmouseup
+	/call ClickItem "The  Sepukku"
+	/delay 5
+	/varset EpicTimer 90s
+}
+
+/if (${Cast.Ready[The Composer]}) {
+	/useitem 23 0
+	/delay 1s
+}
+
+/if ((${Zone.ID}==403 ||${Zone.ID}==405 || ${Zone.ID}==406) && ${Target.Name.Left[2].Equal[##]}) {
+	/if (${Me.AltAbilityReady[Fundament: Second Spire of the Warlord]} && ${Me.Class.ShortName.Equal[WAR]} && ${Target.PctHPs}<95 && ${Target.Type.Equal[NPC]}) {
+		/delay 5
+		/alt activate 1401
+		/delay 5
+	}
+
+	/if (${Me.CombatAbilityReady[Precision Discipline]} && !${Melee.DiscID} && ${Me.Class.ShortName.Equal[WAR]} && ${Target.PctHPs}<95 && ${Target.Type.Equal[NPC]}) {
+		/delay 5
+		/disc precision discipline
+		/delay 1s
+	}
+
+	/if (${Me.CombatAbilityReady[Punch Through]} && !${Melee.DiscID} && ${Me.Class.ShortName.Equal[WAR]} && ${Target.PctHPs}<95 && ${Target.Type.Equal[NPC]}) {
+		/delay 5
+		/disc punch through
+		/delay 1s
+	}
+	/if ((!${EpicTimer} && ${Cast.Ready[Warwolf`s Cry of Torment]})) {
+
+		/delay 5
+
+		|/itemnotify mainhand rightmouseup
+		/call ClickItem "Warwolf`s Cry of Torment"
+		/delay 2
+			
+		|/casting "The Composer" - item
+		/call ClickItem "The Composer"
+		/delay 2
+			
+		/varset EpicTimer 125s
+
+		/delay 3
+
+	}
+
+}
+
+/if (${Me.Class.ShortName.Equal[BRD]} && ${Me.Song[Spirit of Vesagran].Duration.TotalSeconds}<10 && ${FindItemCount[=Avner`s Avenging Song]} && !${EpicTimer})  {
+	/delay 5
+
+	|/itemnotify mainhand rightmouseup
+	|/call ClickItem "Colada"
+	/call ClickItem "Avner`s Avenging Song"
+	/varset EpicTimer 50s
+
+	/delay 2
+
+ }	
+
+
+ |/if (${FindItemCount[Distillate of Celestial Healing XVI]}>0 && !${HealHot} &&  !${Me.Song[Elixir of Healing XVII].Duration} && ${Cast.Ready} ) {
+	
+|	|/potionbelt activate 1
+	
+|	|/itemnotify ${FindItem[Distillate of Celestial Healing XVI].InvSlot} rightmouseup
+|	/call ClickItem "Distillate of Celestial Healing XVI"
+|	/varset HealHot 5
+| }
+ 
+| /if (${FindItemCount[Distillate of Divine Healing XV]}>0 &&  ${FindItem[Distillate of Divine Healing XV].TimerReady} == 0 && ${Me.PctHPs} <= 65 && ${Cast.Ready}) {
+	
+|	|/potionbelt activate 2
+|	|/itemnotify ${FindItem[Distillate of Divine Healing XV].InvSlot} rightmouseup
+|	/call ClickItem "Distillate of Divine Healing XV"
+	
+| }
+ 
+ /if ( ${FindItemCount[Frosted Cuirass of Enlightenment]}>0 && ${Me.Song[Circle of Power III].Duration}<=3 && ${Cast.Ready}) {
+	 
+	|/itemnotify chest rightmouseup
+	|/itemnotify ${FindItem[Frosted Cuirass of Enlightenment].InvSlot} rightmouseup
+	/call ClickItem "Frosted Cuirass of Enlightenment"
+ }
+
+/if ( ${FindItemCount[Golden Dragonlinked Chestguard]}>0 && ${Me.Song[Circle of Power III].Duration}<=3 && ${Cast.Ready}) {
+	 
+	|/itemnotify chest rightmouseup
+	|/itemnotify ${FindItem[Golden Dragonlinked Chestguard].InvSlot} rightmouseup
+	/call ClickItem "Golden Dragonlinked Chestguard"
+ }
+
+ /if ( ${FindItemCount[Supple White Tunic]}>0 && ${Me.Song[Circle of Power III].Duration}<=3 && ${Cast.Ready}) {
+	 
+	|/itemnotify chest rightmouseup
+	|/itemnotify ${FindItem[Supple White Tunic].InvSlot} rightmouseup
+	/call ClickItem "Supple White Tunic"
+	
+ }
+
+/if (!${MeleeHitLastTimer}) {
+	 /echo Melee timed out with no hits after MeleeTimeOutDuration! Ignoring mob...
+	 /if (${Target.ID})  /alert add 1 ID ${Target.ID}
+	 /target clear
+ }
+
+
+
+ |/call dispell_with_ring
+ /goto :have_target
+
+ }
+
+
+
+ /if (${SpawnCount[npc radius ${MaxRad2} zradius ${MaxZ2} targetable noalert 1 range ${TargMin} ${TargMax}]}) {
+
+ /squelch /tar npc radius ${MaxRad2} zradius ${MaxZ2} targetable noalert 1 range ${TargMin} ${TargMax}
+
+ }
+
+
+ /if (${Target.ID}) {
+
+ /goto :kill_outer
+
+ }
+
+/if (${Cursor.ID}==150001 && !${Me.Name.Equal[Eclin]}) {
+	/echo Epic 5 Collection bag!
+	/bcaa //popup ${Me.CleanName} has a Epic 5 Collection bag on the cursor and no free inventory! Ending macro at safespot!
+	/stick off
+	/melee off
+	/stick off
+	/squelch /warp s
+	/delay 1s
+	/endm
+ } 
+ 
+ 
+/if (${DoLoot}) {
+
+ /delay 3
+ /call CheckXTarget
+ 
+ /if (${Macro.Return} < 1 ) {
+	/if (${Zone.ID}==403) {
+		/itemnotify charm rightmouseup
+		/delay 3
+		/itemnotify charm rightmouseup
+
+	}
+	 /call LootTime
+
+ } 
+
+ }
+
+
+
+/return
+
+
+
+
+
+Sub LootTime
+
+ /call Zonecheck
+ 
+ 
+ /call LootMobs
+ /call ReclaimCurrency
+ /call CheckXTarget
+ 
+ /if (${Me.FreeInventory}<FreeInventorySlots && ${Macro.Return} < 1) {
+
+ /call Warren 
+
+ }
+
+
+
+ /if (${FindItemCount[Enigmatic Armor Package]}) /call Enigmatic
+
+ /if (${FindItemCount[Droga Armor Package]}) /call DrogaPackage
+
+/if (${FindItemCount[Bag of Gold Token]}>0) {
+	/delay 3
+	|/itemnotify ${FindItem[Bag of Gold Token].InvSlot} rightmouseup
+	/call ClickItem "Bag of Gold Token"
+	/delay 3
+}
+
+
+
+/return
+
+
+Sub CheckGroupLevel
+/declare gr int local
+/declare grDone int local 1
+
+/if (${Me.Level}==85 && !${regExpDone} ) {
+	/alt on 100
+	/varset regExpDone 1
+
+}
+/if ( ${Me.Grouped}) {
+/for gr 1 to ${Group}
+
+/if ( ${Group.Member[${gr}].Level}<85) /varset grDone 0
+} else {
+
+/if (${Me.Level}<85) /varset grDone 0
+}
+/return ${grDone}
+
+
+Sub Zonecheck
+
+/doevents
+
+
+
+/if (${Zone.ID}== 442) {
+/call CheckGroupLevel
+
+/if (${Macro.Return}) {
+	/squelch /warp s
+	/delay 1s
+	/alt on 100
+	/delay 1s
+	|/beep
+	/endm
+	}
+
+}
+
+
+
+/if (${Zone.ID} == 81 && ${SpawnCount[npc Caridwi]}) {
+	|so i can test standing in normal droga
+	/goto :zoneDrogaFunc
+}
+/if (${Zone.ID}!=${KillZone}) {
+
+/echo Wrong zone!
+ /if (${ZoneIDStarted}==90) {
+ 
+	/echo Returning to City Of Mist
+	
+	/call ZoneCOM
+	
+	/delay 2s
+	/squelch /warp wp safe
+	/varcalc DeathCounter ${Math.Calc[${DeathCounter}+1]}
+	|/timed 30s /macro a2 ${DoLoot} ${MaxRad} named
+	|/goto :startpoint
+	/return
+ }
+ 
+ /if (${ZoneIDStarted}==81) {
+	:zoneDrogaFunc
+	/if (${DrogaTimer}) {
+		/echo Droga AntiBot time out! .: ${Int[${Math.Calc[${DrogaTimer}/600]}]}min left :.
+		/delay 1m
+		/goto :zoneDrogaFunc
+	}
+	/echo Returning to Droga in 10s
+	|/beep
+	/delay 10s
+	/call ZoneDroga
+	/delay 1m
+	/call SetDrogaLevel
+	/varset AntiDrogaMobs 0
+	
+	/return
+ }
+/if (${ZoneIDStarted}==403) {
+ 
+	/echo Returning to SAD
+	/delay 30s
+	/mac goto sad
+ }
+ 
+/if (${ZoneIDStarted}==406) {
+ 
+	/echo Returning to SAD
+	/delay 30s
+	/mac goto sad
+ } 
+  
+/if (${ZoneIDStarted}==405) {
+ 
+	/echo Returning to SAD
+	/delay 30s
+	/mac goto sad
+ } 
+
+ /attack off
+
+ /stick off
+
+ /delay 2s
+
+ |/beep
+
+ |/beep 
+
+ /endm
+
+ }
+
+:Done
+
+/return
+
+
+
+
+
+Sub MedBreak
+
+ 
+
+ /target clear
+
+ /if (!${Me.Sitting}) /sit
+
+ /echo Medbreak
+
+
+
+:medloop
+
+ /doevents
+
+ /if (${Target.Type.Equal[NPC]}) /goto :LeaveMed
+
+ /delay 5
+
+ /if (!${Me.Sitting}) /sit
+
+ /delay 1s
+
+ 
+
+ /if (${Me.PctHPs}<95) /goto :medloop
+
+ :LeaveMed
+
+
+
+/return
+
+
+
+
+
+
+
+
+
+
+
+
+
+Sub Warren
+
+
+
+:Warren
+/call GetTargetFromXTarget
+/if (${Macro.Return} > 0 ) {
+	
+	/squelch /target id ${Macro.Return}
+	/delay 2
+}
+	
+ /if (${Target.ID} && ${Target.Type.Equal[NPC]}) {
+
+ /call combat
+
+ /delay 1s
+
+ /goto :Warren
+
+ }
+
+
+
+
+|old 50
+/if (${SpawnCount[npc steadfast radius 10]}) /goto :sell
+
+/if (${SpawnCount[NPC merchant noalert 3]}) /goto :merchant2
+
+/if (!${Me.AltAbilityReady[Steadfast Servant]}) {
+
+ /delay 10s
+
+ /goto :Warren
+
+ }
+
+ 
+
+:Merchant
+
+
+
+ /if (${Me.AltAbilityReady[Steadfast Servant]}) {
+
+ /alt act 485
+|old 50
+ /delay 20s ${SpawnCount[NPC Steadfast radius 10 noalert 3]}
+
+ /goto :Merchant
+
+ }
+
+
+
+/delay 2s
+
+/goto :sell
+
+
+
+:sell
+/if (!${Target.CleanName.Equal[a Steadfast Servant]}) /tar NPC Steadfast 
+
+/delay 3
+
+/if (${Target.Distance}>10) {
+
+ |/squelch /tar clear
+
+ /goto :sell
+
+ }
+
+
+
+/if (${Target.CleanName.Equal[a Steadfast Servant]}) {
+
+ /delay 5
+
+ /face fast nolook
+
+ /stick 7 moveback
+
+ /delay 1s
+
+ /keypress OPEN_INV_BAGS
+
+ |/sellstuff
+ /call DoLootStuff sell
+
+ /doevents
+
+ /delay 1s
+
+ }
+
+/call ReclaimCurrency
+
+/goto :stopsell
+
+
+
+:Merchant2
+
+
+
+ /tar NPC merchant noalert 3
+
+ /delay 5
+
+ /squelch /warp t
+
+ /delay 2s
+
+ /face fast nolook
+
+ /stick behind
+
+ /delay 1s
+
+ /doability sneak
+
+ /delay 5
+
+ /keypress OPEN_INV_BAGS
+
+ /sellstuff
+
+ /doevents
+
+
+
+ /if (${Me.FreeInventory}<FreeInventorySlots && ${Target.ID} && !${Me.Combat}) {
+
+ /alert add 3 id ${Target.ID}
+
+ /squelch /tar clear
+
+ /delay 2
+
+ /goto :warren
+
+ }
+
+
+
+:sneak off
+
+ /if (${Me.Sneaking}) {
+
+ /doability sneak
+
+ /delay 5
+
+ /goto :sneak off
+
+ }
+
+
+
+ /delay 1s
+
+
+
+
+
+/goto :stopsell
+
+
+
+:stopsell
+
+/squelch /tar clear
+
+/delay 5
+
+
+
+/return
+
+
+
+/return
+
+
+Sub Enigmatic
+
+
+/keypress OPEN_INV_BAGS
+
+/windowstate InventoryWindow open
+
+/delay 1s
+
+/if ( ${Cursor.ID} ) /autoinv
+
+/nomodkey /itemnotify ${FindItem[=Enigmatic Armor Package].InvSlot} rightmouseup
+
+/delay 5s ${Cursor.ID}
+/delay 3
+/if ( ${Cursor.ID} ) /autoinv
+
+/return
+
+
+Sub EnigmaticOld
+
+/keypress OPEN_INV_BAGS
+
+/windowstate InventoryWindow open
+
+/delay 1s
+
+/ctrl /itemnotify ${FindItem[=Enigmatic Armor Package].InvSlot} leftmouseup
+
+/delay 1s
+
+/if (${Cursor.Name.Find[Armor Package]}) /itemnotify pack8 leftmouseup
+
+/delay 3s !${Cursor.Name.Find[Armor Package]}
+
+/itemnotify ${FindItem[=Enigmatic Armor Package].InvSlot} rightmouseup
+
+/delay 2s
+
+:cursorEnig
+
+ /if (${Cursor.ID} && !${Cursor.Container}) {
+
+ /autoinv
+
+ /goto :cursorEnig
+
+ } else { 
+ 
+	/itemnotify pack8 leftmouseup
+	/delay 1s
+	/if ( ${Cursor.ID} !${Cursor.Container}) {
+		/goto :cursorEnig
+	}
+ }
+
+
+
+
+
+/return
+
+
+
+Sub DrogaPackage
+
+
+/keypress OPEN_INV_BAGS
+
+/windowstate InventoryWindow open
+
+/delay 1s
+
+/if ( ${Cursor.ID} ) /autoinv
+
+/nomodkey /itemnotify ${FindItem[=Droga Armor Package].InvSlot} rightmouseup
+
+/delay 5s ${Cursor.ID}
+/delay 3
+/if ( ${Cursor.ID} ) /autoinv
+
+/return
+
+Sub DPOld
+/return
+/declare currItemId int local
+
+/keypress OPEN_INV_BAGS
+
+/windowstate InventoryWindow open
+
+/delay 1s
+
+/ctrl /itemnotify ${FindItem[=Droga Armor Package].InvSlot} leftmouseup
+
+/delay 1s
+
+/if (${Cursor.Name.Find[Armor Package]}) /itemnotify pack8 leftmouseup
+
+/varset currItemId ${Cursor.ID}
+/delay 3
+
+/itemnotify ${FindItem[=Droga Armor Package].InvSlot} rightmouseup
+
+/delay 12s ${Cursor.ID}!=${currItemId}
+
+:cursor2
+/delay 3
+ /if (${Cursor.ID} && !${Cursor.Container}) {
+
+ /autoinv
+ /delay 5
+/delay 1s ${Cursor.ID}
+/if (${Cursor.ID} /goto :cursor2
+
+ } else { 
+	/varset currItemId ${Cursor.ID}
+	/itemnotify pack8 leftmouseup
+	/delay 5
+	/delay 5s ${Cursor.ID}
+	/if ( ${Cursor.ID}) {
+		/goto :cursor2
+	}
+ }
+
+
+
+
+
+/return
+
+|Sub dispell_with_ring
+|	/if (${FindItemCount[Legendary Rebirth Charm]}) {
+|		/if (${FindItem[Legendary Rebirth Charm].TimerReady}>0) /return
+|			/if (${Me.Buff[Tashania].Duration.Seconds}>0) /call cast "Legendary Rebirth Charm" item
+
+|	} else {
+|		/if (${FindItemCount[Legendary Rebirth Charm]} == 0 || ${FindItem[Legendary Rebirth Charm].TimerReady}>0 ) /return
+|		/if (${Me.Buff[Tashania].Duration.Seconds}>0) /call cast "Legendary Rebirth Charm" item
+|		/if (${Me.Buff[Clamor of Tashan Rk. III].Duration.Seconds}>0) /call cast "Legendary Rebirth Charm" item
+|		/if (${Me.Buff[Cacophony of Pain].Duration.Seconds}>0) /call cast "Legendary Rebirth Charm" item
+|		/if (${Me.Buff[Searing Paper Cuts].Duration.Seconds}>0) /call cast "Legendary Rebirth Charm" item
+|		/if (${Me.Song[Devastating Wound].Duration.Seconds}>0) /call cast "Legendary Rebirth Charm" item
+|		/if (${Me.Buff[Blood of Saryrn].Duration.Seconds}>0) /call cast "Legendary Rebirth Charm" item
+|		/if (${Me.Buff[Injected Poison I].Duration.Seconds}>0) /call cast "Legendary Rebirth Charm" item
+|		/if (${Me.Buff[Breath of Ultor].Duration.Seconds}>0) /call cast "Legendary Rebirth Charm" item
+|		/if (${Me.Buff[Malicious Decay].Duration.Seconds}>0) /call cast "Legendary Rebirth Charm" item
+|	}
+|/return
+
+Sub Event_GainSoloExp
+	/varset MeleeGotHitLastTimer 10s
+	/varset MeleeGotMissedLastTimer 10s
+	/varset InstanceNumKills ${Math.Calc[${InstanceNumKills}+1]}
+/return
+
+Sub Event_LdonReset(Line)
+	/varset InstanceNumResets ${Math.Calc[${InstanceNumResets}+1]}
+	/varset InstanceReSpawning 1
+	
+	/popup Instance respawn #${InstanceNumResets} AvgMobLevel:${InstanceAvgLvl} MaxNumMobs:${InstanceMaxMobCount} Kills:${InstanceNumKills}
+/return
+
+Sub Event_LdonCountMob(Line,numMob)
+	/varset InstanceCurrentMobCount ${Int[${numMob}]}
+	/if (${Math.Calc[${InstanceCurrentMobCount}+1]}>${InstanceMaxMobCount}) /varset InstanceMaxMobCount ${Math.Calc[${InstanceCurrentMobCount}+1]}
+	/if (${InstanceAvgLvl}==0) {
+	 /call AverageLvlOfMobs
+	 /varset InstanceAvgLvl ${Macro.Return}
+	 /echo Avg Set to:${InstanceAvgLvl}
+	}
+/return
+
+sub Event_LockedObj(Line,objName)
+	|/echo Hit LockedObj ${objName}
+	/if (${Target.CleanName.Equal[${objName}]}) /alert add 1  id ${Target.ID}
+/return
+
+sub Event_GotHit(Line,mobName)
+	|/echo HitMiss:${mobName}
+	|/if (${Target.CleanName.Equal[${mobName}]}) /varset MeleeGotMissedLastTimer 10s
+	/varset MeleeGotMissedLastTimer 10s
+	|/echo GotMissed..
+/return
+
+sub Event_GotHitDmg(Line,mobName)
+	|/echo GotHitDmg:${mobName} T:${MeleeGotHitLastTimer}
+	/if (${Target.CleanName.Equal[${mobName}]}) /varset MeleeHitLastTimer ${MeleeTimeOutDuration}
+	|/echo gotHitForDMG
+	/varset MeleeGotHitLastTimer 10s
+/return
+sub Event_Hit(Line,mobName)
+	|/echo Hit:${mobName}
+	|/echo GotHit timer ${MeleeHitLastTimer}
+	|/echo MeleeHit:${mobName} T:${MeleeGotHitLastTimer}
+	|/varset MeleeHitLastTimer ${MeleeTimeOutDuration}
+	/if (${Target.CleanName.Equal[${mobName}]}) /varset MeleeHitLastTimer ${MeleeTimeOutDuration}
+/return
+sub Event_MobDeath(Line,mobName)
+	
+	/echo Mob:${mobName}
+/return
+sub Event_TargetOoR
+|/echo event Target called!
+/declare radius int 10 local
+	/declare angle int 0 local
+/if (!${OoRRetargetTimer} ) {
+	/call CheckXTarget
+	/if (${Macro.Return} > 1) {
+		/declare currAggoCount int local ${Macro.Return}
+		/call GetCurrTargetAggroListPos
+		/declare lastTarget int local ${Macro.Return}
+		
+		/if ( ${currAggoCount} == ${lastTarget}) {
+			/target id ${Me.XTarget[${x}].ID} 
+			/squelch /warp loc ${Math.Calc[${Target.Y}+2]} ${Math.Calc[${Target.X}+2]} ${Math.Calc[${Target.Z}+2]} 
+			/varset OoRRetargetTimer 1s
+			/return
+		}
+		
+		/declare x int local
+		/for x 1 to 13
+			/if ( ${Me.XTarget[${x}].ID} > 0 && !${Spawn[id ${Me.XTarget[${x}].ID}].Type.Equal[Untargetable]} && ${Spawn[id ${Me.XTarget[${x}].ID}].Type.Equal[NPC]}) {
+				/if ( ${x}>${lastTarget}) {
+					/target id ${Me.XTarget[${x}].ID} 
+					/squelch /warp loc ${Math.Calc[${Target.Y}+2]} ${Math.Calc[${Target.X}+2]} ${Math.Calc[${Target.Z}+2]} 
+					/varset OoRRetargetTimer 1s
+					/return
+				}
+			}
+		/next x
+		|/varset OoRRetargetTimer 1s
+	}
+	
+	|/echo preang: ${Target.Heading.DegreesCCW}
+	/varcalc angle ${Target.Heading.DegreesCCW}+45
+	|/echo prean:${angle}
+	/if (${angle} > 360) /varcalc angle ${angle}-360
+	/if (${angle} < 0) /varset angle ${angle}+360
+	|/echo postangle:${angle}
+	/call WarpPointOnCircle ${Target.ID} ${angle} ${radius}
+	/return
+} else {
+
+	|/warp loc ${Math.Calc[${Target.Y}+2]} ${Math.Calc[${Target.X}+2]} ${Math.Calc[${Target.Z}+2]}
+	
+
+	/varcalc angle ${Target.Heading.DegreesCCW}+45
+	/echo prean:${angle}
+	/if (${angle} > 360) /varcalc angle ${angle}-360
+	/if (${angle} < 0) /varset angle ${angle}+360
+	/echo angle:${angle}
+	/call WarpPointOnCircle ${Target.ID} ${angle} ${radius}
+}
+
+/return
+
+Sub GetCurrTargetAggroListPos
+
+/declare x int local
+/for x 1 to 13
+	/if (${Me.XTarget[${x}].ID} == ${Target.ID} ) /return ${x} 
+/next x
+
+/return 0
+
+
+Sub CheckDrogaBosses
+
+	/if ( ${SpawnCount[npc ${Mob${mo}} radius ${MaxRad} zradius ${MaxZ} targetable noalert 1 range ${AntiDrogaMobLevel} 300]}>0) {
+	|/echo Got Suspected AntiBot or Boss
+	/declare x int local
+	/declare oldTarg int ${npcID}
+	
+	/for x 1 to ${SpawnCount[npc ${Mob${mo}} radius ${MaxRad} zradius ${MaxZ} targetable  noalert 1 range ${AntiDrogaMobLevel} 300]}
+		 /if ( ${SpawnCount[npc ${Mob${mo}} radius ${MaxRad} zradius ${MaxZ} targetable noalert 1 range ${AntiDrogaMobLevel} 300]}>0) /vardata npcID NearestSpawn[${x},npc ${Mob${mo}} radius ${MaxRad} zradius ${MaxZ} targetable noalert 1 range ${AntiDrogaMobLevel} 300].ID
+		 /if ( ${Spawn[id ${npcID}].Surname.Equal[Boss]}) {
+			/echo Found a Droga Boss! ${Spawn[id ${npcID}].CleanName}
+			
+			/return ${npcID}
+		 }
+		 
+		 /if ( ${Spawn[id ${npcID}].CleanName.Equal[Soldier of Legion]}) {
+			/echo Soldier of Legion
+			/varset AntiDrogaMobs 0
+			/return ${npcID}
+		 }
+		 
+		/if ( ${Spawn[id ${npcID}].Level} >= ${AntiDrogaMobLevel} && !${Spawn[id ${npcID}].Surname.Equal[Boss]} && !${Spawn[id ${npcID}].CleanName.Equal[Soldier of Legion]}) {
+			/echo Found Droga AntiBot mob . ${Spawn[id ${npcID}].Name} . adding to counter
+			/varset AntiDrogaMobs ${Math.Calc[${AntiDrogaMobs}+1]}
+		}
+		 /if ( ${npcID} == 0) {
+			/varset npcID ${oldTarg}
+			/return 0
+		}
+		 /varset oldTarg ${npcID}
+	/next x
+	}
+	
+/return 0
+
+Sub AvoidDrogaAntiBot
+
+	/if ( ${SpawnCount[npc ${Mob${mo}} radius ${MaxRad} zradius ${MaxZ} targetable noalert 1 range ${AntiDrogaMobLevel} 500]}>0) {
+	
+	/declare x int local
+	/declare tempID int local
+	
+	/for x 1 to ${SpawnCount[npc ${Mob${mo}} radius ${MaxRad} zradius ${MaxZ} targetable  noalert 1 range ${AntiDrogaMobLevel} 500]}
+		 /vardata tempID NearestSpawn[${x},npc ${Mob${mo}} radius ${MaxRad} zradius ${MaxZ} targetable noalert 1 range ${AntiDrogaMobLevel} 500].ID
+				 
+		/if ( ${Spawn[id ${tempID}].Level} >= ${AntiDrogaMobLevel} && !${Spawn[id ${tempID}].Surname.Equal[Boss]} && !${Spawn[id ${tempID}].CleanName.Equal[Soldier of Legion]}) {
+			/echo Found Droga AntiBot mob . ${Spawn[id ${tempID}].Name} . adding to counter
+			/varset AntiDrogaMobs ${Math.Calc[${AntiDrogaMobs}+1]}
+		}
+		
+		 	/next x
+	}
+
+/return
+
+
+
+
+Sub LeaveDrogaInstance
+		
+		:LDL
+		/if ( ${Zone.ID}==81) {
+			/nomodkey /itemnotify powersource rightmouseup
+			/delay 1s
+			/goto :LDL
+		}
+		
+		/delay 5m ${Zone.ID}!=81
+		/varset DrogaTimer 30m
+		/call ZoneCheck
+/return
+
+Sub CheckLdon
+/declare ldonZones string local guka,ruja,taka,mira,mmca,gukb,rujb,takb,mirb,mmcb,gukc,rujc,takc,mirc,mmcc,gukd,rujd,takd,mird,mmcd,guke,ruje,take,mire,mmce,gukf,rujf,takf,mirf,mmcf,gukg,rujg,takg,mirg,mmcg,gukh,rujh,takh,mirh,mmch,ruji,taki,miri,mmci,rujj,takj,mirj,mmcj
+/if (${ldonZones.Find[${Zone.ShortName}]}) /varset IsLdon 1
+/return
+
+Sub CheckNamedList
+	/for lx 1 to 10
+		/if (${namedMobsToLoot[${lx}]}>0 && !${Spawn[${namedMobsToLoot[${lx}]}].ID}) {
+			/echo Removed id ${namedMobsToLoot[${lx}]} no matching spawn!
+			/varset namedMobsToLoot[${lx}] 0
+
+		}
+		/if (${namedMobsToLoot[${lx}]}==${Target.ID}) {
+			
+			/return
+		}
+	/next lx
+
+	/for lx 1 to 10
+		/if (${namedMobsToLoot[${lx}]}==0 ) {
+			/varset namedMobsToLoot[${lx}] ${Target.ID}
+			/echo Added ${Target.CleanName} To named loot list!
+			/return
+		}
+	/next lx
+/return
+
+Sub ClickItem(itemToClick)
+|**
+/if (${FindItemCount[=${itemToClick}]}==0 || ${Me.Stunned} || ${Me.Casting.ID} || ${FindItem[=${itemToClick}].TimerReady} || !${Cast.Ready[${itemToClick}]}) {
+	|/echo ClickItem failed first check when clicking ${itemToClick}
+	/return
+}
+**|
+/if (${FindItemCount[=${itemToClick}]}==0) {
+	/echo ClickItem .. missing ${itemToClick}
+	/return
+}
+
+/if (!${Me.Standing}) /return
+/if (${Me.Stunned}) {
+	/echo BClickItem Stunned! ${itemToClick}
+	/return
+}
+
+/if (${Me.Casting.ID}) {
+	/echo CastItem already casting. ${itemToClick}
+	/return
+}
+
+/if (${FindItem[=${itemToClick}].TimerReady}) {
+	/echo ClickItem Cooldown ${FindItem[=${itemToClick}].TimerReady} on ${itemToClick}
+	/return
+}
+
+/if (!${Cast.Ready[${itemToClick}]}) {
+	/echo ClickItem Cast not ready! ${itemToClick}
+}
+/declare rightClass int local 0
+
+/for lx 1 to ${FindItem[=${itemToClick}].Classes}
+	/if (${FindItem[=${itemToClick}].Class[${lx}].ShortName.Equal[${Me.Class.ShortName}]}) /varset rightClass 1
+/next lx
+
+/if (${rightClass}==0) {
+	/echo ClickItem failed classcheck when clicking ${itemToClick}
+	/return
+}
+
+/if (${FindItem[=${itemToClick}].InvSlot}==0) {
+	/echo ClickItem Failed to click ${itemToClick} InvSlot=NULL
+	/return
+}
+/echo Clicking ${itemToClick}
+/itemnotify ${FindItem[=${itemToClick}].InvSlot} rightmouseup
+/delay 5
+/return
+
+Sub WriteLdonStat(inString)
+	/declare x1 int local
+	/for x1 1 to 100
+		/if (${Ini[a2LdonStat.ini,Boss,Boss${x1}].Length}==0) {
+			/ini a2LdonStat.ini Boss Boss${x1} "${inString}"
+			/return
+		}
+	/next x1
+/return
+
+:OnExit
+/echo Ending A2.mac
+/endm
+/if (${IsLdon} && ${SpawnCount[npc Killer Wasp]}==0) {
+	/ini a2.ini a2 ${Me.Name} ${Me.ID}|${Zone.ID}|${InstanceAvgLvl}|${InstanceCurrentMobCount}|${InstanceMaxMobCount}|${InstanceNumKills}|${InstanceNumResets}
+}  
+/return
+
+Sub SummonGearPet
+
+	/declare petItem string local ${FindItem[godly companions]}
+
+	
+	/if (!${Me.Pet.ID}) {
+		/if (${petItem.Length}==0) {
+			/echo Only works with the Godly Pet!
+			/return
+		}
+		:petloop
+		/call ClickItem "${petItem}"
+		/delay 2s ${Me.Pet.ID}
+	}
+	/if (${Me.Pet.ID} ) {
+	
+	/target id ${Me.Pet.ID}
+	/delay 1s
+	/squelch /notify ChatWindow CW_ChatOutput link B758F00000000000000000000000000000000000000000000000000
+	/delay 5
+	/squelch /notify ChatWindow CW_ChatOutput link B757E00000000000000000000000000000000000000000000000000
+	/delay 5
+	/squelch /notify ChatWindow CW_ChatOutput link B757E00000000000000000000000000000000000000000000000000
+	/delay 5
+	/squelch /notify ChatWindow CW_ChatOutput link B758A00000000000000000000000000000000000000000000000000
+	/delay 5
+	}
+/return
+sub Event_ArrowSwap	
+	/exchange "The Trueshot Arrow" Ammo
+/return
